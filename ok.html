@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Q&A Hub (GitHub-only)</title>
+<style>
+  body{margin:0;background:#0f1221;color:#eef2ff;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .card{background:#121736;border:1px solid #262a40;border-radius:14px;padding:18px;box-shadow:0 8px 28px rgba(0,0,0,.25);margin-bottom:14px}
+  input,textarea{width:100%;background:#0f1326;color:#eef2ff;border:1px solid #262a40;border-radius:10px;padding:10px 12px}
+  .btn{background:#6ea8fe;border:0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer}
+  .btn.secondary{background:#0f1326;color:#c9d2ff;border:1px solid #262a40}
+  .btn.danger{background:#ff6b6b}
+  .tag{display:inline-block;padding:2px 8px;border:1px solid #2a2e49;border-radius:999px;font-size:12px;color:#cbd3ff;margin-right:6px}
+  table{width:100%;border-collapse:separate;border-spacing:0 8px}
+  thead th{font-size:12px;color:#8a90a6;text-align:left;padding:0 10px}
+  tbody tr{background:#0f1326;border:1px solid #262a40}
+  tbody td{padding:12px 10px;vertical-align:top}
+  .muted{color:#8a90a6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Q&A Hub</h1>
+
+  <div class="card">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <input id="search" placeholder="Filter keywords… (question, answer, tags)" />
+      <button class="btn secondary" id="clear">Clear</button>
+      <button class="btn" id="exportXlsx">Export .xlsx</button>
+      <a class="btn secondary" href="./qa.xlsx" download>Download repo Excel</a>
+      <button class="btn secondary" id="downloadJson">Download edited JSON</button>
+    </div>
+    <table>
+      <thead><tr><th style="width:36%">Question</th><th>Answer</th><th style="width:18%">Tags</th><th style="width:140px">Actions</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="muted" style="display:none;margin-top:8px">No items.</div>
+  </div>
+
+  <div class="card">
+    <h2>Add / Edit</h2>
+    <form id="form">
+      <input id="q" placeholder="Question" required />
+      <textarea id="a" placeholder="Answer" required></textarea>
+      <input id="t" placeholder="Tags (comma separated)" />
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button class="btn" type="submit">Save (local)</button>
+        <button class="btn secondary" type="reset">Reset</button>
+      </div>
+    </form>
+    <p class="muted">Edits happen locally in your browser. Click “Download edited JSON” to save the updated <code>qa.json</code>, then upload/commit it to <code>data/qa.json</code> in GitHub. The Action will rebuild Excel and publish the latest to Pages.</p>
+  </div>
+</div>
+
+<!-- SheetJS for real Excel generation -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+let DATA = []; // in-memory working set
+let editId = null;
+
+const rows = document.getElementById("rows");
+const search = document.getElementById("search");
+
+function escapeHtml(s){return (s||"").replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
+const norm = s => (s||"").toLowerCase();
+const splitTags = v => (v||"").split(",").map(s=>s.trim()).filter(Boolean);
+
+async function load(){
+  try{
+    const r = await fetch("./qa.json", {cache:"no-store"});
+    DATA = await r.json();
+  }catch{ DATA = []; }
+  render();
+}
+function render(){
+  const q = norm(search.value);
+  const items = DATA.filter(it=>{
+    const hay = norm([it.question,it.answer,(it.tags||[]).join(" ")].join(" "));
+    return hay.includes(q);
+  });
+  rows.innerHTML = "";
+  document.getElementById("empty").style.display = items.length? "none":"block";
+  items.forEach(it=>{
+    const tr = document.createElement("tr");
+    const tags = (it.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join(" ");
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(it.question)}</strong></td>
+      <td>${escapeHtml(it.answer).replace(/\n/g,"<br>")}</td>
+      <td>${tags || "—"}</td>
+      <td>
+        <button class="btn secondary" onclick='startEdit("${it.id||""}")'>Edit</button>
+        <button class="btn danger" onclick='removeItem("${it.id||""}")'>Delete</button>
+      </td>`;
+    rows.appendChild(tr);
+  });
+}
+function startEdit(id){
+  const it = DATA.find(x=>String(x.id||"")===String(id));
+  if(!it) return;
+  editId = id;
+  document.getElementById("q").value = it.question || "";
+  document.getElementById("a").value = it.answer || "";
+  document.getElementById("t").value = (it.tags||[]).join(", ");
+}
+function removeItem(id){
+  DATA = DATA.filter(x=>String(x.id||"")!==String(id));
+  render();
+}
+document.getElementById("form").addEventListener("submit", e=>{
+  e.preventDefault();
+  const q = document.getElementById("q").value.trim();
+  const a = document.getElementById("a").value.trim();
+  const t = splitTags(document.getElementById("t").value);
+  if(!q || !a) return;
+
+  if(editId){
+    const idx = DATA.findIndex(x=>String(x.id||"")===String(editId));
+    if(idx>-1) DATA[idx] = {...DATA[idx], question:q, answer:a, tags:t};
+    editId = null;
+  }else{
+    const id = Math.random().toString(36).slice(2,9);
+    DATA.push({id, question:q, answer:a, tags:t});
+  }
+  e.target.reset();
+  render();
+});
+
+document.getElementById("clear").onclick = ()=>{ search.value=""; render(); };
+search.addEventListener("input", render);
+
+document.getElementById("exportXlsx").onclick = ()=>{
+  const ws = XLSX.utils.json_to_sheet(DATA.map(it=>({
+    id: it.id || "",
+    question: it.question || "",
+    answer: it.answer || "",
+    tags: (it.tags||[]).join("|")
+  })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Q&A");
+  XLSX.writeFile(wb, "qa_export.xlsx");
+};
+
+document.getElementById("downloadJson").onclick = ()=>{
+  const blob = new Blob([JSON.stringify(DATA, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "qa.json";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+};
+
+load();
+</script>
+</body>
+</html>
